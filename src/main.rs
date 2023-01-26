@@ -1,15 +1,24 @@
-use rust_stream::BytesRange;
+use http_types::headers::HeaderValue;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::path::PathBuf;
+use std::str;
+use streamed::BytesRange;
+use tide::security::{CorsMiddleware, Origin};
 use tide::{Body, Error, Request, Response};
 use urlencoding::decode;
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
+    let cors = CorsMiddleware::new()
+        .allow_methods("GET, POST, OPTIONS".parse::<HeaderValue>().unwrap())
+        .allow_origin(Origin::from("*"))
+        .allow_credentials(false);
+
     let mut app = tide::new();
+    app.with(cors);
     app.at("/movies").get(list_dir);
     app.at("/movies/:title").get(handle_stream);
     app.at("/movies/:title/translation").get(serve_translation);
@@ -71,8 +80,13 @@ async fn handle_stream(req: Request<()>) -> tide::Result<Response> {
             let bytes_range = BytesRange::parse(&val, file_size);
             let seek = bytes_range.start;
             f.seek(SeekFrom::Start(seek.try_into()?))?;
-            let mut buf = vec![0; bytes_range.end - bytes_range.start + 1];
-            f.read(&mut buf)?;
+            let mut size = 1000 * 5000;
+            if bytes_range.end - bytes_range.start + 1 < size {
+                size = bytes_range.end - bytes_range.start + 1;
+            }
+            let mut chunked_file = f.take(size.try_into()?);
+            let mut buf = vec![0; size];
+            chunked_file.read(&mut buf)?;
             let response = Response::builder(206)
                 .body(Body::from_bytes(buf))
                 .header(
