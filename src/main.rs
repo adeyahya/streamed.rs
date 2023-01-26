@@ -22,7 +22,7 @@ async fn main() -> tide::Result<()> {
     app.at("/movies").get(list_dir);
     app.at("/movies/:title").get(handle_stream);
     app.at("/movies/:title/translation").get(serve_translation);
-    app.listen("127.0.0.1:8080").await?;
+    app.listen("0.0.0.0:8080").await?;
     Ok(())
 }
 
