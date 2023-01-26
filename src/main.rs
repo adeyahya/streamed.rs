@@ -1,51 +1,86 @@
+use rust_stream::BytesRange;
+use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;
-use std::str;
-use tide::{Body, Request, Response};
+use std::path::PathBuf;
+use tide::{Body, Error, Request, Response};
+use urlencoding::decode;
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
     let mut app = tide::new();
-    app.at("/").get(handle_stream);
-    app.listen("127.0.0.1:8081").await?;
+    app.at("/movies").get(list_dir);
+    app.at("/movies/:title").get(handle_stream);
+    app.at("/movies/:title/translation").get(serve_translation);
+    app.listen("127.0.0.1:8080").await?;
     Ok(())
 }
 
+async fn list_dir(_: Request<()>) -> Result<Body, Error> {
+    let dirs: Vec<PathBuf> = fs::read_dir("./MOVIES")?
+        .map(|dir| dir.unwrap().path().to_owned())
+        .filter(|dir| dir.is_dir())
+        .collect();
+    let dirs: Vec<String> = dirs
+        .iter()
+        .map(|dir| String::from(dir.file_name().unwrap().to_str().unwrap()))
+        .collect();
+    Body::from_json(&dirs)
+}
+
+fn find_mp4_file(path: &str) -> String {
+    let target = fs::read_dir(format!("./MOVIES/{}", path))
+        .unwrap()
+        .map(|dir| dir.unwrap().path().to_owned())
+        .find(|f| f.extension().unwrap().to_str().unwrap() == "mp4");
+    String::from(target.unwrap().to_str().unwrap())
+}
+
+fn find_srt_file(path: &str) -> String {
+    let target = fs::read_dir(format!("./MOVIES/{}", path))
+        .unwrap()
+        .map(|dir| dir.unwrap().path().to_owned())
+        .find(|f| f.extension().unwrap().to_str().unwrap() == "srt");
+    match target {
+        Some(val) => String::from(val.to_str().unwrap()),
+        None => String::from("./dummy.txt"),
+    }
+}
+
+async fn serve_translation(req: Request<()>) -> tide::Result<Response> {
+    let title = req.param("title").unwrap();
+    let title = decode(title).expect("UTF-8");
+    let title = find_srt_file(&title);
+    let response = Response::builder(200)
+        .body(Body::from_file(&title).await?)
+        .build();
+    Ok(response)
+}
+
 async fn handle_stream(req: Request<()>) -> tide::Result<Response> {
-    let mut f = File::open("Premium.Rush.2012.1080p.BluRay.x264.YIFY.mp4").unwrap();
-    let file_size: usize = f.metadata().unwrap().len().try_into().unwrap();
+    let title = req.param("title").unwrap();
+    let title = decode(title).expect("UTF-8");
+    let title = find_mp4_file(&title);
+    let mut f = File::open(&title)?;
+    let file_size: usize = f.metadata()?.len().try_into()?;
     let range = req.header("range");
     match range {
         Some(val) => {
             let val = val.to_string();
-            let val = val
-                .replace("bytes=", "")
-                .replace("[", "")
-                .replace("]", "")
-                .replace('"', "");
-            let bytes_range: Vec<&str> = val.split("-").collect();
-            let bytes_start = bytes_range[0].parse::<usize>().unwrap_or(0);
-            let bytes_end = bytes_range[1].parse::<usize>().unwrap_or(0);
-            let bytes_end = if bytes_end == 0 {
-                file_size - 1
-            } else {
-                bytes_end
-            };
-            let bytes_end = if bytes_end > file_size {
-                file_size
-            } else {
-                bytes_end
-            };
-            let seek = bytes_start;
-            f.seek(SeekFrom::Start(seek.try_into().unwrap())).unwrap();
-            let mut buf = vec![0; bytes_end - bytes_start + 1];
-            f.read(&mut buf).unwrap();
+            let bytes_range = BytesRange::parse(&val, file_size);
+            let seek = bytes_range.start;
+            f.seek(SeekFrom::Start(seek.try_into()?))?;
+            let mut buf = vec![0; bytes_range.end - bytes_range.start + 1];
+            f.read(&mut buf)?;
             let response = Response::builder(206)
                 .body(Body::from_bytes(buf))
                 .header(
                     "Content-Range",
-                    format!("bytes {}-{}/{}", bytes_start, bytes_end, file_size),
+                    format!(
+                        "bytes {}-{}/{}",
+                        bytes_range.start, bytes_range.end, file_size
+                    ),
                 )
                 .header("Accept-Ranges", "bytes")
                 .header("Content-Type", "video/mp4")
@@ -55,7 +90,7 @@ async fn handle_stream(req: Request<()>) -> tide::Result<Response> {
         None => {
             let response = Response::builder(200)
                 .header("Content-Type", "video/mp4")
-                .body(Body::from_file("Premium.Rush.2012.1080p.BluRay.x264.YIFY.mp4").await?)
+                .body(Body::from_file(&title).await?)
                 .build();
             Ok(response)
         }

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/gh/faizath/srt2vtt.js@main/srt2vtt.js"></script>
+  <title>Document</title>
+</head>
+
+<body>
+  <video controls autoplay>
+    <source src="http://localhost:8081/movies/the%20immitation%20game%20[2010]" />
+    <track label="English" kind="subtitles"
+      src="http://localhost:8081/movies/the%20immitation%20game%20[2010]/translation" src-lang="en" default>
+    </track>
+  </video>
+  <script>
+    srt2vtt.run();
+  </script>
+</body>
+
+</html>
